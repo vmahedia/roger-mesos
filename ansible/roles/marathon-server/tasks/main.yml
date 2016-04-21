@@ -88,9 +88,9 @@
       - plugin
       - configuration
 
-  - name: Create a temp dir for local permissions file and oauth file when marathon_auth_permissions_gspreadsheets is true
-    when: marathon_auth_enable is defined and marathon_auth_enable|bool and
-          marathon_auth_permissions_gspreadsheets is defined and not(marathon_auth_permissions_gspreadsheets | trim == '')
+  - name: Create a temp dir for local permissions file and oauth file when marathon_auth_permissions_gspreadsheets is true or for nginx basic auth
+    when: ( marathon_auth_enable is defined and marathon_auth_enable|bool and
+          marathon_auth_permissions_gspreadsheets is defined and not(marathon_auth_permissions_gspreadsheets | trim == '') ) or nginx_proxy_enable
     local_action: shell mktemp -d
     always_run: yes # run during check mode
     run_once: yes
@@ -154,6 +154,7 @@
       - permissions
       - permissions-sync
       - permissions-gen
+
 
   - name: Copy permissions file from local src when marathon_auth_permissions_local_path is defined
     when: marathon_auth_enable is defined and marathon_auth_enable|bool and
@@ -223,3 +224,143 @@
     notify: restart marathon
     tags:
       - marathon
+
+
+  - name: Download nginx release
+    when: nginx_proxy_enable is defined and nginx_proxy_enable|bool
+    get_url: url="{{nginx_release_url}}" dest="{{tmp_dir}}"
+    become: yes
+    tags:
+      - install
+      - nginx 
+
+  - name: try to stop nginx proxy if it is already running
+    when: nginx_proxy_enable is defined and nginx_proxy_enable|bool
+    command: /usr/local/nginx/sbin/nginx -s stop
+    become: yes
+    ignore_errors: yes
+    tags:
+      - nginx 
+
+  - name: Untar nginx package
+    when: nginx_proxy_enable is defined and nginx_proxy_enable|bool
+    unarchive: copy=no dest="{{tmp_dir}}" src="{{tmp_dir}}/{{nginx_pkg_tar}}"
+    become: yes
+    tags:
+      - install
+      - nginx 
+
+  - name: Install nginx dependencies
+    when: nginx_proxy_enable is defined and nginx_proxy_enable|bool
+    apt: name={{ item }} state=present
+    with_items: "{{ nginx_package_deps }}"
+    become: yes
+    tags:
+      - packages
+      - nginx
+
+  - name: configure and install nginx with auth_request module
+    when: nginx_proxy_enable is defined and nginx_proxy_enable|bool
+    command: chdir={{tmp_dir}}/{{nginx_pkg}} {{item}}
+    with_items:
+      - ./configure --with-http_auth_request_module 
+      - make 
+      - make install
+    become: yes
+    tags:
+      - install
+      - nginx 
+
+  - name: Remove the old basic auth file if it already exists
+    when: nginx_proxy_enable is defined and nginx_proxy_enable|bool
+    file: path={{mktemp.stdout}}/{{nginx_basic_auth_file_name}} state=absent
+    become: yes
+    tags:
+      - install
+      - nginx 
+
+  - name: Fail if nginx proxy is enabled but permissions file path is not defined
+    fail: msg="basic auth file for nginx can't be generated without permissions file locally, define - marathon_auth_permissions_local_path"
+    when: nginx_proxy_enable is defined and nginx_proxy_enable|bool and marathon_auth_permissions_local_path is not defined or marathon_auth_permissions_local_path | trim == ''
+
+  - name: Generate nginx basic auth file if nginx_proxy_enable is set && it requires permissions file locally
+    when: nginx_proxy_enable is defined and nginx_proxy_enable|bool and
+          marathon_auth_permissions_local_path is defined and not(marathon_auth_permissions_local_path | trim == '')
+    local_action: shell python {{ role_path }}/files/generate_nginx_basic_auth_file.py {{marathon_auth_permissions_local_path}} {{mktemp.stdout}}/{{nginx_basic_auth_file_name}}
+    always_run: yes # run during check mode
+    run_once: yes
+    tags:
+      - configuration
+      - nginx 
+
+  - name: Copy basic auth credentials file to the nginx conf
+    when: nginx_proxy_enable is defined and nginx_proxy_enable|bool
+    copy: src={{mktemp.stdout}}/{{nginx_basic_auth_file_name}} dest="{{nginx_conf_dir}}/{{nginx_basic_auth_file_name}}"  mode=0644
+    become: yes
+    tags:
+      - install
+      - nginx 
+
+  - name: Copy AAA daemon to nginx conf directory for now
+    when: nginx_proxy_enable is defined and nginx_proxy_enable|bool
+    copy: src=aaad dest={{nginx_conf_dir}}  mode=0655
+    become: yes
+    tags:
+      - install
+      - nginx 
+
+  - name: Configure aaad upstart job
+    template: src=aaad.conf.j2 dest=/etc/init/aaad.conf owner=root group=root mode=0600
+    become: yes
+    notify: start aaad
+    tags:
+      - nginx
+      - aaa daemon
+
+
+  - name: create directory to put different sites config
+    when: nginx_proxy_enable is defined and nginx_proxy_enable|bool
+    file: path="{{nginx_conf_dir}}/sites-available" state=directory
+    become: yes
+    tags:
+      - install
+      - nginx 
+
+  - name: create a directory to hold symlink to the default site config
+    when: nginx_proxy_enable is defined and nginx_proxy_enable|bool
+    file: path="{{nginx_conf_dir}}/sites-enabled"   state=directory 
+    become: yes
+    tags:
+      - install
+      - nginx 
+
+  - name: copy proxy config to sites-available
+    when: nginx_proxy_enable is defined and nginx_proxy_enable|bool
+    template: src=rogeros_auth_proxy.conf.j2 dest="{{nginx_conf_dir}}/sites-available" mode=0644
+    become: yes
+    tags:
+      - install
+      - nginx 
+
+  - name: symlink proxy config to default site
+    when: nginx_proxy_enable is defined and nginx_proxy_enable|bool
+    file: src="{{nginx_conf_dir}}/sites-available/rogeros_auth_proxy.conf" dest="{{nginx_conf_dir}}/sites-enabled/default" state=link
+    become: yes
+    tags:
+      - install
+      - nginx 
+
+  - name: copy nginx conf file
+    template: src=nginx.conf.j2 dest={{nginx_conf_dir}}/nginx.conf  mode=0644
+    become: yes
+    tags:
+      - install
+      - nginx
+
+  - name: start nginx proxy for rogeros auth 
+    when: nginx_proxy_enable is defined and nginx_proxy_enable|bool
+    command: /usr/local/nginx/sbin/nginx 
+    become: yes
+    tags:
+      - nginx 
+

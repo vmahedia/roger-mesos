@@ -50,6 +50,11 @@ marathon_package_deps:
   - libvorbis0a
   - libvorbisenc2
 
+nginx_package_deps:
+  - libpcre3-dev
+  - zlib1g-dev 
+  - libgcrypt11-dev
+
 marathon_version: 0.15.3-1.0.463.ubuntu1404
 
 marathon_auth_plugin_pkg: marathon_auth_plugin_0.1-alpha.tar.gz
@@ -59,3 +64,17 @@ marathon_auth_plugin_url: https://github.com/seomoz/marathon-auth-plugin/release
 marathon_auth_plugin_pkg_sha256: 7f26d8a1ffe47215d7ba4574852fa943efc0e34402f7d7bedd79e00cbe0e4156
 
 marathon_auth_plugin_location: "{{base_data_dir}}/marathon/plugins"
+
+nginx_pkg: nginx-1.8.1
+
+nginx_pkg_tar: "{{nginx_pkg}}.tar.gz"
+
+nginx_release_url: http://nginx.org/download/{{nginx_pkg_tar}}
+
+nginx_conf_dir: /usr/local/nginx/conf
+
+nginx_basic_auth_file_name: .htpasswd
+
+nginx_proxy_port: 4080
+
+nginx_aaad_port: 8888
